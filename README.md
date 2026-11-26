@@ -4,6 +4,8 @@ Spotify-style synced lyrics **inside YouTube Music's own Lyrics tab**. The plain
 
 ## Install / update
 
+**Easiest:** download `synced-lyrics-ytmusic-v1.0.0.zip` from the [latest release](https://github.com/SuDefRequests/ytmusic-synced-lyrics/releases/latest), unzip it, then follow step 1 below and select the unzipped folder.
+
 1. `chrome://extensions`
 2. Developer mode → **Load unpacked** (first time) or click the extension's **Reload** button (after an update)
 3. Select this folder
