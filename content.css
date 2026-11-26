@@ -182,6 +182,12 @@ ytmusic-tab-renderer#tab-renderer.ytm-pro-lyrics-scroller *::-webkit-scrollbar {
   opacity: 1;
 }
 
+.ytm-pro-lyrics-line.is-active .ytm-pro-lyrics-word.is-singing {
+  color: #fff;
+  opacity: calc(0.62 + 0.38 * var(--w-prog, 0));
+  transition: none;
+}
+
 .ytm-pro-lyrics-word.is-space-before::before {
   content: ' ';
   white-space: normal !important;
