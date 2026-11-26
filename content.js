@@ -48,7 +48,9 @@ let watchdog = null;
 let rafId = null;
 let lastFrame = 0;
 let observer = null;
+let observedSidePanel = null;
 let observerTimer = null;
+let navSeq = 0;
 
 /* ---------------------------------------------------------------- bootstrap */
 
@@ -63,6 +65,7 @@ let observerTimer = null;
   await handleNavigation();
 
   watchdog = setInterval(async () => {
+    observeSidePanel();
     const id = readVideoId();
     if (id && id !== state.videoId) await handleNavigation();
     const v = findVideo();
@@ -106,11 +109,11 @@ function readMetaFromDom() {
   try {
     const md = navigator.mediaSession && navigator.mediaSession.metadata;
     if (md) {
-      title = md.title || '';
-      artist = md.artist || '';
-      album = md.album || '';
+      if (!title && md.title) title = md.title;
+      if (!artist && md.artist) artist = md.artist;
+      if (!album && md.album) album = md.album;
       const art = md.artwork && md.artwork[0];
-      artwork = (art && art.src) || '';
+      if (!artwork && art && art.src) artwork = art.src;
     }
   } catch (_) { /* isolated world */ }
 
@@ -169,40 +172,71 @@ function readPageData() {
 
 /* --------------------------------------------------------------- navigation */
 
-async function handleNavigation() {
-  const id = readVideoId();
-  if (!id) return;
-  state.videoId = id;
-  state.fetching = true;
-  mountLoading();
+function mergeMeta(target, src, overwrite = false) {
+  if (!src) return;
+  if (src.title && (overwrite || !target.title || /^youtube\s*music$/i.test(target.title))) target.title = src.title;
+  if (src.artist && (overwrite || !target.artist)) target.artist = src.artist;
+  if (src.album && (overwrite || !target.album)) target.album = src.album;
+  if (src.artwork && (overwrite || !target.artwork)) target.artwork = src.artwork;
+}
 
+async function readCombinedMeta() {
   const [domMeta, page] = await Promise.all([readMetaFromDom(), readPageData()]);
   const meta = { ...domMeta };
-
-  // The main-world mediaSession is authoritative; the isolated-world DOM
-  // guess can land on stray <h1> elements ("YouTube Music").
-  if (page.media && page.media.title) Object.assign(meta, page.media);
-  else if (page.title) {
+  // Prefer the live player bar; use main-world mediaSession to fill gaps
+  // (or when DOM only has "YouTube Music").
+  if (page.media && page.media.title) {
+    mergeMeta(meta, page.media, false);
+  } else if (page.title) {
     const cleaned = page.title.replace(/\s*[|｜-]\s*YouTube\s*Music\s*$/i, '').trim();
     if (cleaned && cleaned !== 'YouTube Music') {
       const parts = cleaned.split(/\s+[-–—|｜]\s+/);
-      if (!meta.title || meta.title === 'YouTube Music') meta.title = parts[0];
+      if (!meta.title || /^youtube\s*music$/i.test(meta.title)) meta.title = parts[0];
       if (!meta.artist && parts[1]) meta.artist = parts[1];
     }
   }
+  return { meta, page };
+}
 
-  // The player bar can still be empty on a cold load — retry before giving up.
-  if (!meta.title || /^youtube\s*music$/i.test(meta.title)) {
-    await sleep(900);
-    const domRetry = readMetaFromDom();
-    const pageRetry = await readPageData();
-    if (domRetry.title && !/^youtube\s*music$/i.test(domRetry.title)) Object.assign(meta, domRetry);
-    if (pageRetry.media && pageRetry.media.title) Object.assign(meta, pageRetry.media);
+function isStaleOrEmptyMeta(meta, prevVideoId, id, prevMeta) {
+  if (!meta.title || /^youtube\s*music$/i.test(meta.title)) return true;
+  if (prevVideoId && prevVideoId !== id && prevMeta && prevMeta.title) {
+    return meta.title === prevMeta.title && (meta.artist || '') === (prevMeta.artist || '');
+  }
+  return false;
+}
+
+async function handleNavigation() {
+  const id = readVideoId();
+  if (!id) return;
+  const token = ++navSeq;
+  const prevVideoId = state.videoId;
+  const prevMeta = state.meta;
+  state.videoId = id;
+  state.fetching = true;
+  state.lines = [];
+  state.wordsEnabled = false;
+  state.source = '';
+  state.errors = [];
+  state.meta = null;
+  state.dynamicAccent = null;
+  state.dynamicTint = null;
+  state.lastArtwork = null;
+  mountLoading();
+
+  let { meta, page } = await readCombinedMeta();
+  if (token !== navSeq || state.videoId !== id) return;
+
+  // On cold load or track switch, the player bar / mediaSession can lag behind
+  // the URL change and still hold the previous track's metadata.
+  for (let i = 0; i < 4 && isStaleOrEmptyMeta(meta, prevVideoId, id, prevMeta); i++) {
+    await sleep(350);
+    if (token !== navSeq || state.videoId !== id) return;
+    ({ meta, page } = await readCombinedMeta());
+    if (token !== navSeq || state.videoId !== id) return;
   }
 
   state.meta = meta;
-  state.dynamicAccent = null;
-  state.lastArtwork = null;
   document.documentElement.dataset.sly = 'meta:' + (meta.title || 'none');
   state.video = findVideo();
   const duration = state.video && Number.isFinite(state.video.duration) ? state.video.duration : 0;
@@ -215,6 +249,7 @@ async function handleNavigation() {
     ytcfg: page.cfg,
     source: state.settings.source
   });
+  if (token !== navSeq || state.videoId !== id) return;
 
   state.fetching = false;
   state.errors = (response && response.errors) || [];
@@ -360,6 +395,9 @@ function applyLyrics() {
 
   renderLines();
   applyAppearance();
+  if (state.settings.dynamicColor && !state.dynamicAccent && state.meta && state.meta.artwork) {
+    maybeColorize(state.meta.artwork);
+  }
 }
 
 function applyAppearance() {
@@ -383,10 +421,12 @@ async function maybeColorize(artwork) {
   state.lastArtwork = artwork;
   try {
     const res = await sendToBackground({ type: 'GET_IMAGE_DATA_URL', url: artwork });
+    if (state.lastArtwork !== artwork || !state.nativeEl) return;
     if (!res || !res.dataUrl) return;
     const img = new Image();
     img.src = res.dataUrl;
     await img.decode();
+    if (state.lastArtwork !== artwork || !state.nativeEl) return;
     const canvas = document.createElement('canvas');
     canvas.width = 32; canvas.height = 32;
     const ctx = canvas.getContext('2d', { willReadFrequently: true });
@@ -482,7 +522,7 @@ function paint(t, force = false) {
   if (!state.lineEls.length) return;
   const n = state.lines.length;
   let idx = 0;
-  while (idx + 1 < n && state.lines[idx + 1].time <= t + 0.12) idx++;
+  while (idx + 1 < n && state.lines[idx + 1].time <= t + 0.08) idx++;
 
   if (idx !== state.active || force) {
     for (let i = 0; i < n; i++) {
@@ -492,20 +532,35 @@ function paint(t, force = false) {
       el.classList.toggle('is-near', Math.abs(i - idx) === 1);
     }
     state.active = idx;
+    state.lastWordKey = '';
     updateScroll();
   }
 
   const line = state.lines[idx];
   if (line && line.words && line.words.length) {
     const el = state.lineEls[idx];
+    const wt = t + 0.02;
     let wi = -1;
     for (let i = 0; i < line.words.length; i++) {
-      if (t >= line.words[i].time) wi = i; else break;
+      if (wt >= line.words[i].time) wi = i; else break;
     }
-    const key = idx + ':' + wi;
+    let prog = 0;
+    if (wi >= 0) {
+      const w = line.words[wi];
+      const dur = Math.max(0.08, (w.end || w.time + 0.35) - w.time);
+      prog = Math.min(1, Math.max(0, (wt - w.time) / dur));
+    }
+    const key = idx + ':' + wi + ':' + prog.toFixed(2);
     if (key !== state.lastWordKey) {
       const spans = el.querySelectorAll('.ytm-pro-lyrics-word');
-      spans.forEach((s, i) => s.classList.toggle('is-sung', i <= wi));
+      spans.forEach((s, i) => {
+        const sung = i < wi || (i === wi && prog >= 0.98);
+        const singing = i === wi && !sung;
+        s.classList.toggle('is-sung', sung);
+        s.classList.toggle('is-singing', singing);
+        if (singing) s.style.setProperty('--w-prog', prog.toFixed(2));
+        else s.style.removeProperty('--w-prog');
+      });
       state.lastWordKey = key;
     }
   }
@@ -534,7 +589,11 @@ async function scrollToActive(behavior = 'smooth') {
   state.programmaticScroll = true;
   let result;
   try { result = scroller.scrollTo({ top: target, behavior }); }
-  catch (_) { scroller.scrollTop = target; state.programmaticScroll = false; return; }
+  catch (_) {
+    scroller.scrollTop = target;
+    if (op === state.scrollOp) state.programmaticScroll = false;
+    return;
+  }
 
   // Scroll-method promises are Chrome 150+; degrade gracefully elsewhere.
   if (result instanceof Promise) {
@@ -554,7 +613,7 @@ async function scrollToActive(behavior = 'smooth') {
       timer = setTimeout(done, 100);
     });
   }
-  state.programmaticScroll = false;
+  if (op === state.scrollOp) state.programmaticScroll = false;
 }
 
 function updateScroll() {
@@ -630,13 +689,11 @@ function bindScrollAway(scroller) {
   const onKey = (e) => {
     if (['ArrowDown', 'ArrowUp', 'PageDown', 'PageUp', 'Home', 'End'].includes(e.key)) onUserScroll();
   };
-  const onScroll = () => { if (!state.programmaticScroll) onUserScroll(); };
   const fns = {
     wheel: onUserScroll,
     touchstart: onUserScroll,
     pointerdown: onPointer,
-    keydown: onKey,
-    scroll: onScroll
+    keydown: onKey
   };
   for (const [name, fn] of Object.entries(fns)) {
     scroller.addEventListener(name, fn, { passive: true });
@@ -653,7 +710,7 @@ function unbindScrollAway() {
 
 function tick(ts) {
   rafId = requestAnimationFrame(tick);
-  if (ts - lastFrame < 55) return;
+  if (ts - lastFrame < 16) return;
   lastFrame = ts;
   if (!state.applied || !state.lines.length) return;
   const v = state.video;
@@ -672,7 +729,10 @@ function tick(ts) {
 
 function observeSidePanel() {
   const side = deepQuery('#side-panel');
-  if (!side || observer) return;
+  if (!side) return;
+  if (observer && observedSidePanel === side && side.isConnected) return;
+  if (observer) observer.disconnect();
+  observedSidePanel = side;
   observer = new MutationObserver(() => {
     clearTimeout(observerTimer);
     observerTimer = setTimeout(() => {
@@ -685,8 +745,11 @@ function observeSidePanel() {
 
 function bindGlobal() {
   document.addEventListener('yt-navigate-finish', () => {
-    restoreNative();
-    handleNavigation();
+    const id = readVideoId();
+    if (id && (id !== state.videoId || (!state.fetching && !state.lines.length))) {
+      restoreNative();
+      handleNavigation();
+    }
   });
 
   document.addEventListener('keydown', (e) => {
@@ -706,6 +769,9 @@ function bindGlobal() {
     }
     if (changes.enabled || changes.autoApply || changes.showSource) {
       state.settings.enabled && state.settings.autoApply ? applyLyrics() : restoreNative();
+    }
+    if (changes.source && state.videoId) {
+      handleNavigation();
     }
   });
 
@@ -742,8 +808,12 @@ function toggleEnabled() {
 
 function sendToBackground(msg) {
   return new Promise(resolve => {
-    try { chrome.runtime.sendMessage(msg, res => resolve(res || {})); }
-    catch (_) { resolve({}); }
+    try {
+      chrome.runtime.sendMessage(msg, res => {
+        void chrome.runtime.lastError;
+        resolve(res || {});
+      });
+    } catch (_) { resolve({}); }
   });
 }
 
