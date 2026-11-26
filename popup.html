@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Synced Lyrics</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+<div class="wrap">
+
+  <header class="head">
+    <div class="logo">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v10.55A4 4 0 1 0 14 17V7h4V3h-6z"/></svg>
+    </div>
+    <div>
+      <h1>Synced Lyrics</h1>
+      <p>inside YouTube Music's lyrics tab</p>
+    </div>
+  </header>
+
+  <div class="status" id="status">
+    <span class="status-dot" id="status-dot"></span>
+    <span id="status-text">Checking YouTube Music…</span>
+  </div>
+
+  <div class="track" id="track" hidden>
+    <div class="track-title" id="track-title"></div>
+    <div class="track-artist" id="track-artist"></div>
+  </div>
+
+  <section class="group hero">
+    <div class="row">
+      <div class="label">
+        <strong>Enable synced lyrics</strong>
+        <small>Replaces plain text in the Lyrics tab</small>
+      </div>
+      <label class="switch"><input type="checkbox" id="enabled"><span class="slider"></span></label>
+    </div>
+    <div class="row">
+      <div class="label"><strong>Auto-apply on track change</strong><small>Keep it on for every song</small></div>
+      <label class="switch"><input type="checkbox" id="autoApply"><span class="slider"></span></label>
+    </div>
+    <div class="row">
+      <div class="label"><strong>Show source label</strong><small>Small credit above the lyrics</small></div>
+      <label class="switch"><input type="checkbox" id="showSource"><span class="slider"></span></label>
+    </div>
+  </section>
+
+  <section class="group">
+    <div class="group-title">LYRIC SOURCE</div>
+    <div class="segmented" id="source">
+      <button data-value="auto" class="active">Auto</button>
+      <button data-value="lrclib">LRCLIB</button>
+      <button data-value="youtube">YouTube</button>
+    </div>
+    <p class="note">Auto uses LRCLIB first, then tries YouTube's API as a fallback.</p>
+  </section>
+
+  <footer class="foot">
+    <span><kbd>Alt</kbd> + <kbd>L</kbd> toggle</span>
+    <span class="tiny">Click a line to seek · scroll to read ahead</span>
+  </footer>
+
+</div>
+<script src="popup.js"></script>
+</body>
+</html>
