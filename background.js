@@ -139,7 +139,8 @@ async function fromYouTube({ videoId, ytcfg }) {
           method: 'POST',
           headers: baseHeaders,
           body: JSON.stringify(ep.body),
-          credentials: 'include'
+          credentials: 'include',
+          signal: AbortSignal.timeout(10000)
         }
       );
       if (!res.ok) continue;
@@ -213,42 +214,48 @@ function extractTimedLyrics(node, out = []) {
 
 async function fromLRCLIB({ title, artist, album, duration }) {
   const t = cleanTitle(title);
+  const tNoFeat = stripFeatured(t);
   const a = cleanArtist(artist);
   if (!t && !a) return null;
 
-  // Try the exact track first, then progressively drop fields that might
-  // disagree with LRCLIB's metadata (album name / duration in particular).
-  const base = {};
-  if (t) base.track_name = t;
-  if (a) base.artist_name = a;
-  if (album) base.album_name = cleanTitle(album);
-  if (Number.isFinite(duration) && duration > 1) base.duration = String(Math.round(duration));
-
-  const attempts = [{ ...base }];
-  if (base.album_name) { const x = { ...base }; delete x.album_name; attempts.push(x); }
-  if (base.duration) { const x = { ...base }; delete x.duration; attempts.push(x); }
-  if (base.album_name && base.duration) {
-    const x = { ...base }; delete x.album_name; delete x.duration; attempts.push(x);
-  }
-
+  const titleVariants = tNoFeat && tNoFeat !== t ? [t, tNoFeat] : [t];
   let data = null;
-  for (const params of attempts) {
-    try {
-      const res = await fetch(`${LRCLIB}/get?${new URLSearchParams(params).toString()}`, {
-        headers: { accept: 'application/json' }
-      });
-      if (!res.ok) continue;
-      const json = await res.json();
-      if (json && json.syncedLyrics) { data = json; break; }
-    } catch (_) { /* next attempt */ }
-  }
 
-  if (!data) {
-    const q = [a, t].filter(Boolean).join(' ');
+  for (const trackName of titleVariants) {
+    // Try the exact track first, then progressively drop fields that might
+    // disagree with LRCLIB's metadata (album name / duration in particular).
+    const base = {};
+    if (trackName) base.track_name = trackName;
+    if (a) base.artist_name = a;
+    if (album) base.album_name = cleanTitle(album);
+    if (Number.isFinite(duration) && duration > 1) base.duration = String(Math.round(duration));
+
+    const attempts = [{ ...base }];
+    if (base.album_name) { const x = { ...base }; delete x.album_name; attempts.push(x); }
+    if (base.duration) { const x = { ...base }; delete x.duration; attempts.push(x); }
+    if (base.album_name && base.duration) {
+      const x = { ...base }; delete x.album_name; delete x.duration; attempts.push(x);
+    }
+
+    for (const params of attempts) {
+      try {
+        const res = await fetch(`${LRCLIB}/get?${new URLSearchParams(params).toString()}`, {
+          headers: { accept: 'application/json' },
+          signal: AbortSignal.timeout(10000)
+        });
+        if (!res.ok) continue;
+        const json = await res.json();
+        if (json && json.syncedLyrics) { data = json; break; }
+      } catch (_) { /* next attempt */ }
+    }
+    if (data) break;
+
+    const q = [a, trackName].filter(Boolean).join(' ');
     if (q) {
       try {
         const res = await fetch(`${LRCLIB}/search?query=${encodeURIComponent(q)}`, {
-          headers: { accept: 'application/json' }
+          headers: { accept: 'application/json' },
+          signal: AbortSignal.timeout(10000)
         });
         if (res.ok) {
           const results = await res.json();
@@ -257,12 +264,12 @@ async function fromLRCLIB({ title, artist, album, duration }) {
               const xs = x.syncedLyrics ? 0 : 1;
               const ys = y.syncedLyrics ? 0 : 1;
               if (xs !== ys) return xs - ys;
-              if (Number.isFinite(duration)) {
+              if (Number.isFinite(duration) && duration > 1) {
                 return Math.abs((x.duration || 0) - duration) - Math.abs((y.duration || 0) - duration);
               }
               return 0;
             });
-            if (ranked[0] && ranked[0].syncedLyrics) data = ranked[0];
+            if (ranked[0] && ranked[0].syncedLyrics) { data = ranked[0]; break; }
           }
         }
       } catch (_) { /* ignore */ }
@@ -305,23 +312,50 @@ function parseLRC(lrc) {
   out.sort((a, b) => a.time - b.time);
   const unique = dedupe(out);
 
-  // Line-level LRC is the norm. Estimate per-word timings from the gap to
-  // the next line so the karaoke fill still works (flagged as estimated).
+  // Line-level LRC is the norm. Estimate per-word timings using the song's own
+  // measured vocal pace (chars/sec) so ballads and fast rap both stay locked in.
+  const cpsSamples = [];
+  for (let i = 0; i < unique.length; i++) {
+    const next = unique[i + 1];
+    if (!next) continue;
+    const span = next.time - unique[i].time;
+    const chars = unique[i].text.replace(/\s+/g, '').length;
+    if (span >= 1.0 && span <= 5.5 && chars >= 6) {
+      cpsSamples.push(chars / (span * 0.88));
+    }
+  }
+  cpsSamples.sort((a, b) => a - b);
+  const rawCps = cpsSamples.length ? cpsSamples[Math.floor(cpsSamples.length / 2)] : 12;
+  const songCps = Math.min(20, Math.max(7, rawCps));
+
   for (let i = 0; i < unique.length; i++) {
     const line = unique[i];
-    if (line.words && line.words.length) continue;
     const next = unique[i + 1];
+    if (line.words && line.words.length) {
+      for (let j = 0; j < line.words.length; j++) {
+        const nw = line.words[j + 1];
+        line.words[j].end = nw ? nw.time : (next ? Math.min(next.time, line.words[j].time + 0.8) : line.words[j].time + 0.8);
+      }
+      continue;
+    }
     let span = next ? next.time - line.time : 4;
     if (!Number.isFinite(span) || span <= 0) span = 4;
-    span = Math.min(span, 12);
     const tokens = line.text.split(/\s+/).filter(Boolean);
     if (!tokens.length) continue;
-    const weights = tokens.map(w => Math.max(2, w.replace(/[^\p{L}\p{N}]/gu, '').length));
+    const weights = tokens.map(w => {
+      const core = Math.max(2, w.replace(/[^\p{L}\p{N}]/gu, '').length);
+      const pause = /[,;?!:—–-]$/.test(w) ? 2 : 0;
+      return core + pause;
+    });
     const total = weights.reduce((a, b) => a + b, 0);
+    const naturalDur = Math.max(0.85, 0.18 + total / songCps);
+    const activeSpan = span <= 5.2
+      ? Math.min(span * 0.88, naturalDur * 1.45)
+      : Math.min(span * 0.85, naturalDur);
     let cursor = line.time;
     line.words = tokens.map((tok, j) => {
-      const dur = (weights[j] / total) * span * 0.88;
-      const word = { time: cursor, text: tok, estimated: true };
+      const dur = (weights[j] / total) * activeSpan;
+      const word = { time: cursor, end: cursor + dur, text: tok, estimated: true };
       cursor += dur;
       return word;
     });
@@ -371,6 +405,15 @@ function cleanTitle(s) {
     .trim();
 }
 
+function stripFeatured(s) {
+  if (!s) return '';
+  return String(s)
+    .replace(/\s*[\[(]\s*(?:feat\.?|ft\.?|featuring|with)\b[^\])]*[\])]/gi, '')
+    .replace(/\s+(?:feat\.?|ft\.?)\s+[^-–—|]+$/i, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 function cleanArtist(s) {
   if (!s) return '';
   return String(s)
@@ -383,8 +426,10 @@ function cleanArtist(s) {
 
 async function toDataUrl(url) {
   if (!url || !/^https?:/i.test(url)) throw new Error('bad image url');
-  const res = await fetch(url, { credentials: 'omit' });
+  const res = await fetch(url, { credentials: 'omit', signal: AbortSignal.timeout(10000) });
   if (!res.ok) throw new Error('image HTTP ' + res.status);
+  const mime = ((res.headers.get('content-type') || 'image/jpeg').split(';')[0] || 'image/jpeg').trim();
+  if (!mime.startsWith('image/')) throw new Error('not an image');
   const buf = await res.arrayBuffer();
   let bytes = '';
   const view = new Uint8Array(buf);
@@ -392,6 +437,5 @@ async function toDataUrl(url) {
   for (let i = 0; i < view.length; i += chunk) {
     bytes += String.fromCharCode.apply(null, view.subarray(i, i + chunk));
   }
-  const mime = (res.headers.get('content-type') || 'image/jpeg').split(';')[0];
   return `data:${mime};base64,${btoa(bytes)}`;
 }
