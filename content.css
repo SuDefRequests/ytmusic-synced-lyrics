@@ -1,0 +1,308 @@
+/* ------------------------------------------------------------------ *
+ * ytm-pro-lyrics — a first-party-looking synced lyrics layer that lives
+ * inside YouTube Music's own Lyrics tab. Scoped by a unique prefix so
+ * Polymer's global styles cannot leak into typography, spacing or colour.
+ * ------------------------------------------------------------------ */
+
+/* Native scroll container: completely chrome-less, with an alpha fade at
+ * both edges so lines dissolve under the tab bar and above the player. */
+ytmusic-tab-renderer#tab-renderer.ytm-pro-lyrics-scroller {
+  /* Only this outermost, full-width container may clip/scroll. */
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
+  scrollbar-width: none !important;
+  -ms-overflow-style: none !important;
+  mask-image: linear-gradient(to bottom, transparent 0%, black 10%, black 85%, transparent 100%);
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0%, black 10%, black 85%, transparent 100%);
+}
+
+ytmusic-tab-renderer#tab-renderer.ytm-pro-lyrics-scroller::-webkit-scrollbar,
+ytmusic-tab-renderer#tab-renderer.ytm-pro-lyrics-scroller *::-webkit-scrollbar {
+  display: none !important;
+  width: 0 !important;
+  height: 0 !important;
+}
+
+.ytm-pro-lyrics {
+  --sly-accent: #ff5c8a;
+  position: relative;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  font-family: 'YouTube Sans', 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  padding: 48px 28px 140px 24px;
+  color: #fff;
+}
+
+.ytm-pro-lyrics-source {
+  margin: 0 0 8px;
+  font-size: 10px;
+  line-height: 1.4;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, .3);
+}
+
+.ytm-pro-lyrics-source::before {
+  content: '';
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  margin-right: 7px;
+  border-radius: 50%;
+  background: var(--sly-accent);
+  vertical-align: middle;
+}
+
+/* ------------------------------------------------------------ lines */
+
+.ytm-pro-lyrics-lines {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  text-align: left;
+}
+
+.ytm-pro-lyrics-line {
+  position: relative;
+  display: flex;
+  align-items: baseline;
+  overflow: visible !important; /* never slice the active-line glow */
+  max-width: 85%;
+  font-size: clamp(22px, 1.6vw, 28px);
+  font-weight: 700;
+  line-height: 1.35;
+  letter-spacing: -0.02em;
+  color: rgba(255, 255, 255, 0.42);
+  cursor: pointer;
+  transform-origin: left center;
+  transition:
+    transform 0.38s cubic-bezier(0.22, 1, 0.36, 1),
+    color 0.3s ease,
+    opacity 0.3s ease,
+    filter 0.3s ease;
+}
+
+.ytm-pro-lyrics-line:hover {
+  color: rgba(255, 255, 255, 0.85);
+  filter: none;
+}
+
+/* Hover-revealed timestamp, aligned to the right edge of the line. */
+.ytm-pro-lyrics-line::after {
+  content: attr(data-stamp);
+  position: absolute;
+  flex: 0 0 auto;
+  flex-shrink: 0;
+  right: 0;
+  top: 50%;
+  padding: 3px 7px;
+  border: 1px solid rgba(255, 255, 255, .12);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, .07);
+  color: rgba(255, 255, 255, .55);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0;
+  line-height: 1;
+  white-space: nowrap;
+  opacity: 0;
+  transform: translate(6px, -50%);
+  pointer-events: none;
+  transition: opacity .25s ease, transform .25s ease;
+}
+
+.ytm-pro-lyrics-line:hover::after,
+.ytm-pro-lyrics-line:focus-visible::after {
+  opacity: 1;
+  transform: translate(0, -50%);
+}
+
+.ytm-pro-lyrics-line:focus-visible {
+  outline: 2px solid rgba(255, 255, 255, .7);
+  outline-offset: 4px;
+  border-radius: 4px;
+}
+
+/* Tier 1 — currently playing */
+.ytm-pro-lyrics-line.is-active {
+  color: #ffffff;
+  opacity: 1;
+  transform: scale(1.03);
+  text-shadow: 0 0 28px rgba(255, 255, 255, 0.22);
+  filter: none;
+}
+
+/* Tier 2 — readable upcoming lines (default colour above); neighbours
+ * inherit it rather than getting a special brighter state. */
+.ytm-pro-lyrics-line.is-near {
+  color: rgba(255, 255, 255, 0.42);
+  filter: none;
+}
+
+/* Tier 3 — already sung */
+.ytm-pro-lyrics-line.is-past {
+  color: rgba(255, 255, 255, 0.20);
+  filter: blur(0.4px);
+  transform: scale(1);
+}
+
+/* YouTube Music's parent Polymer styles force aggressive breaking; pin it
+ * back to clean, space-first wrapping without touching colour or spacing. */
+.ytm-pro-lyrics-line,
+.ytm-pro-lyrics-word {
+  word-break: normal !important;
+  word-wrap: normal !important;
+  hyphens: none !important;
+  white-space: normal !important;
+  overflow: visible !important;
+}
+
+.ytm-pro-lyrics-text {
+  display: block;
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: none;
+  overflow: visible !important;
+  white-space: normal !important;
+  word-break: normal !important;
+  overflow-wrap: break-word !important;
+  word-wrap: break-word !important;
+  hyphens: none !important;
+}
+
+.ytm-pro-lyrics-word {
+  color: inherit;
+  opacity: .62;
+  transition: color .22s ease, opacity .22s ease;
+}
+
+.ytm-pro-lyrics-line.is-active .ytm-pro-lyrics-word.is-sung {
+  color: #fff;
+  opacity: 1;
+}
+
+.ytm-pro-lyrics-word.is-space-before::before {
+  content: ' ';
+  white-space: normal !important;
+}
+
+/* ------------------------------------------------- instrumental gaps */
+
+.ytm-pro-lyrics-gap {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 1.35em;
+  color: rgba(255, 255, 255, .28);
+  font-size: .72em;
+  letter-spacing: .18em;
+  user-select: none;
+  transition: opacity .3s ease;
+}
+
+.ytm-pro-lyrics-gap.is-past {
+  opacity: 0;
+}
+
+.ytm-pro-lyrics-gap span { animation: ytm-pro-lyrics-pulse 1.25s ease-in-out infinite; }
+.ytm-pro-lyrics-gap span:nth-child(2) { animation-delay: .18s; }
+.ytm-pro-lyrics-gap span:nth-child(3) { animation-delay: .36s; }
+
+@keyframes ytm-pro-lyrics-pulse {
+  0%, 100% { opacity: .3; transform: translateY(0); }
+  50% { opacity: 1; transform: translateY(-2px); }
+}
+
+/* ------------------------------------------------------ loading state */
+
+.ytm-pro-lyrics-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+
+.ytm-pro-lyrics-skeleton span {
+  display: block;
+  height: .74em;
+  border-radius: 6px;
+  background: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, .05) 20%,
+    rgba(255, 255, 255, .16) 50%,
+    rgba(255, 255, 255, .05) 80%
+  );
+  background-size: 200% 100%;
+  animation: ytm-pro-lyrics-shimmer 1.4s linear infinite;
+}
+
+@keyframes ytm-pro-lyrics-shimmer {
+  from { background-position: 200% 0; }
+  to { background-position: -200% 0; }
+}
+
+/* ---------------------------------------------------------- sync pill */
+
+.ytm-pro-lyrics-sync {
+  position: fixed;
+  z-index: 2147483646;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 16px 9px 13px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.12);
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
+  color: #fff;
+  font: 650 12px/1 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  letter-spacing: .01em;
+  cursor: pointer;
+  box-shadow: 0 8px 26px rgba(0, 0, 0, .3);
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(8px) scale(.94);
+  transition:
+    opacity .24s ease-out,
+    transform .42s cubic-bezier(.22, 1, .36, 1),
+    background .2s ease,
+    box-shadow .2s ease,
+    visibility .24s;
+}
+
+.ytm-pro-lyrics-sync.is-visible {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(0) scale(1);
+}
+
+.ytm-pro-lyrics-sync svg {
+  width: 15px;
+  height: 15px;
+  fill: currentColor;
+}
+
+.ytm-pro-lyrics-sync:hover {
+  background: rgba(255, 255, 255, .2);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, .4);
+}
+
+.ytm-pro-lyrics-sync:active { transform: translateY(0) scale(.96); }
+
+.ytm-pro-lyrics-sync:focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: 3px;
+}
+
+/* --------------------------------------------------- reduced motion */
+
+@media (prefers-reduced-motion: reduce) {
+  .ytm-pro-lyrics-line {
+    transition: color .3s ease, opacity .3s ease;
+  }
+  .ytm-pro-lyrics-line.is-active { transform: none; }
+  .ytm-pro-lyrics-gap span,
+  .ytm-pro-lyrics-skeleton span { animation: none; }
+  .ytm-pro-lyrics-sync { transition: opacity .16s ease, visibility .16s; transform: none; }
+}
