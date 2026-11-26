@@ -1,0 +1,44 @@
+{
+  "manifest_version": 3,
+  "name": "Synced Lyrics for YouTube Music",
+  "short_name": "Synced Lyrics",
+  "version": "1.0.0",
+  "description": "Line-by-line (and word-by-word) synced lyrics for YouTube Music, Spotify-style.",
+  "permissions": ["storage", "tabs", "scripting"],
+  "host_permissions": [
+    "https://music.youtube.com/*",
+    "https://www.youtube.com/*",
+    "https://youtube.com/*",
+    "https://lrclib.net/*",
+    "https://i.ytimg.com/*",
+    "https://yt3.ggpht.com/*",
+    "https://yt3.googleusercontent.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://music.youtube.com/*"],
+      "js": ["content.js"],
+      "css": ["content.css"],
+      "run_at": "document_idle",
+      "all_frames": false
+    }
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Synced Lyrics — click for settings"
+  },
+  "icons": {
+    "16": "icons/icon-16.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  },
+  "web_accessible_resources": [
+    {
+      "resources": ["content.css", "icons/*"],
+      "matches": ["https://music.youtube.com/*"]
+    }
+  ]
+}
