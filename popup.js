@@ -42,19 +42,23 @@ async function save(obj) { await chrome.storage.sync.set(obj); }
 function send(msg) {
   return new Promise(resolve => {
     chrome.tabs.query({ active: true, currentWindow: true }, tabs => {
+      void chrome.runtime.lastError;
       const tab = tabs && tabs[0];
       if (!tab || !tab.id || !/music\.youtube\.com/.test(tab.url || '')) return resolve({});
-      chrome.tabs.sendMessage(tab.id, msg, res => resolve(res || {}));
+      chrome.tabs.sendMessage(tab.id, msg, res => {
+        void chrome.runtime.lastError;
+        resolve(res || {});
+      });
     });
   });
 }
 
-async function refreshStatus() {
+async function refreshStatus(attempt = 0) {
   const dot = $('status-dot');
   const text = $('status-text');
   const info = await send({ type: 'GET_STATE' });
 
-  if (!info || (!info.track && !info.lines)) {
+  if (!info || (!info.track && !info.lines && !info.fetching)) {
     dot.className = 'status-dot bad';
     text.textContent = 'Open YouTube Music and play a song';
     return;
@@ -63,6 +67,7 @@ async function refreshStatus() {
   if (info.fetching) {
     dot.className = 'status-dot';
     text.textContent = 'Loading lyrics…';
+    if (attempt < 12) setTimeout(() => refreshStatus(attempt + 1), 800);
   } else if (info.lines > 0 && info.applied) {
     dot.className = 'status-dot ok';
     text.textContent = `${info.source} · ${info.lines} lines · active`;
